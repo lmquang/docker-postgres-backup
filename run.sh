@@ -21,6 +21,10 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-${POSTGRES_ENV_POSTGRES_PASSWORD}}
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 
 BACKUP_CMD="pg_dump -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} -f /backup/\${BACKUP_NAME} ${EXTRA_OPTS} ${POSTGRES_DB}"
+if [ "${POSTGRES_DB}" = "--all-databases" ]; then
+	BACKUP_CMD="pg_dumpall -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} -f /backup/\${BACKUP_NAME} ${EXTRA_OPTS}"
+fi
+
 
 echo ${MINIO_HOST}
 if [ -n "${MINIO_HOST}" ]; then
@@ -120,6 +124,37 @@ echo "=> Backup done"
 EOF
 chmod +x /backup.sh
 
+echo "=> Creating doarchive script"
+rm -f /doarchive.sh
+cat <<EOF >> /doarchive.sh
+#!/bin/sh
+S3_BACKUP_NAME=${S3_BACKUP_NAME} /archive.sh
+EOF
+chmod +x /doarchive.sh
+
+echo "=> Creating s3 script"
+rm -f /uploads3.sh
+cat <<EOF >> /uploads3.sh
+#!/bin/sh
+export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+
+echo $AWS_ACCESS_KEY_ID
+echo $AWS_SECRET_ACCESS_KEY
+echo $AWS_DEFAULT_REGION
+echo ${S3_BUCKET_URL}
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+echo "=> Uploading archive to S3"
+aws s3 cp /tmp/*.tar.gz ${S3_BUCKET_URL}
+echo "=> Removing local archive"
+rm -f /tmp/*.tar.gz
+echo "=> Upload done"
+EOF
+chmod +x /uploads3.sh
+
 echo "=> Creating restore script"
 rm -f /restore.sh
 cat <<EOF >> /restore.sh
@@ -143,12 +178,21 @@ echo "=> Done"
 EOF
 chmod +x /restore.sh
 
-touch /postgres_backup.log
-tail -F /postgres_backup.log &
+echo "=> Creating backup & upload to s3"
+rm -f /task.sh
+cat <<EOF >> /task.sh
+#!/bin/sh
+/backup.sh
+/doarchive.sh
+/uploads3.sh
+EOF
+chmod +x /task.sh
 
 if [ -n "${INIT_BACKUP}" ]; then
     echo "=> Create a backup on the startup"
     /backup.sh
+    /doarchive.sh
+	/uploads3.sh
 elif [ -n "${INIT_RESTORE_LATEST}" ]; then
     echo "=> Restore latest backup"
     until nc -z $POSTGRES_HOST $POSTGRES_PORT
@@ -186,7 +230,9 @@ EOF
 	/restore.sh /backup/restore_target.sql
 fi
 
-echo "${CRON_TIME} /backup.sh >> /postgres_backup.log 2>&1" > /crontab.conf
+touch /postgres_backup.log
+tail -F /postgres_backup.log &
+echo "${CRON_TIME} /task.sh >> /postgres_backup.log 2>&1" > /crontab.conf
 crontab  /crontab.conf
 echo "=> Running cron job"
 exec cron -f

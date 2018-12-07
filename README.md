@@ -36,6 +36,12 @@ Moreover, if you link `jmcarbo/docker-postgres-backup` to a postgres container (
     MINIO_ACCESS_KEY minio access key
     MINIO_SECRET_KEY minio secret key
 
+    AWS_ACCESS_KEY_ID  Get this from amazon IAM
+    AWS_SECRET_ACCESS_KEY   Get this from amazon IAM, you should keep this a secret
+    S3_BUCKET_URL   in most cases this should be s3://name-of-your-bucket/
+    AWS_DEFAULT_REGION  The AWS region your bucket resides in
+    S3_BACKUP_NAME A name to identify your backup among the other files in your bucket, it will be postfixed with the current timestamp (date and time)
+
 ## Restore from a backup
 
 See the list of backups, you can run:
